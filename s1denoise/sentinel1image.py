@@ -87,38 +87,39 @@ class Sentinel1ImageXml:
 
     def download_aux_calibration(self, filename):
         """ Download AUX calibration file from APC """
-        self.auxiliaryCalibration_file = os.path.join(self.aux_data_dir, filename, 'data', '%s-aux-cal.xml' % self.platform.lower())
-        if os.path.exists(self.auxiliaryCalibration_file):
-            return
-        vs = filename.split('_')[3].lstrip('V')
-        validity_start = f'{vs[:4]}-{vs[4:6]}-{vs[6:8]}T{vs[9:11]}:{vs[11:13]}:{vs[13:15]}'
-        cd = filename.split('_')[4].lstrip('G')
-        creation_date = f'{cd[:4]}-{cd[4:6]}-{cd[6:8]}T{cd[9:11]}:{cd[11:13]}:{cd[13:15]}'
-        def get_remote_url(api_url):
-            with requests.get(api_url, stream=True) as r:
-                rjson = json.loads(r.content.decode())
-                remote_url = rjson['results'][0]['remote_url']
-                physical_name = rjson['results'][0]['physical_name']
-                return remote_url, physical_name
-        try:
-            remote_url, physical_name = get_remote_url(f'https://sar-mpc.eu/api/v1/?product_type=AUX_CAL&validity_start={validity_start}&creation_date={creation_date}')
-        except:
-            remote_url, physical_name = get_remote_url(f'https://sar-mpc.eu/api/v1/?product_type=AUX_CAL&validity_start={validity_start}')
+        auxarchive = f"{self.platform}_AUX_CAL_20241128"
+        auxarchive_path = Path(self.aux_data_dir) / auxarchive
 
-        download_file = os.path.join(self.aux_data_dir, physical_name)
-        print(f'downloading {filename}.zip from {remote_url}')
-        with requests.get(remote_url, stream=True) as r:
-            with open(download_file, "wb") as f:
+        # Check if the AUX calibration file for current product already exists
+        vs = filename.split('_')[3].lstrip('V')
+        vs_year = vs[:4]
+        vs_month = vs[4:6]
+        vs_hour = vs[6:8]
+        subdirs = f"{self.platform}/AUX_CAL/{vs_year}/{vs_month}/{vs_hour}"
+        self.auxiliaryCalibration_file = auxarchive_path / subdirs / filename / "data" / f"{self.platform.lower()}-aux-cal.xml"
+        if auxarchive_path.exists():
+            # the unzipped archive already exists
+            if self.auxiliaryCalibration_file.exists():
+                # and contains the calibration file
+                return
+            else:
+                # but does not include the calibration file
+                raise FileNotFoundError(f"AUX calibration archive does not include {filename}. This is probably because your product was created with an IPF version after 11/2024.")
+        
+        # Download archive containing AUX files
+        auxarchive_url = f"https://sar-mpc.eu/files/{auxarchive}.zip"
+        print(f'Downloading AUX calibration archive from {auxarchive_url}')
+        
+        with requests.get(auxarchive_url, stream=True) as r:
+            with open(auxarchive_path.with_suffix(".zip"), "wb") as f:
                 f.write(r.content)
 
-        with zipfile.ZipFile(download_file, 'r') as download_zip:
-            download_zip.extractall(path=self.aux_data_dir)
-        output_dir = f'{self.aux_data_dir}/{filename}'
-        if not os.path.exists(output_dir):
-            # in case the physical_name of the downloaded file does not exactly match the filename from manifest
-            # the best found AUX-CAL file is copied to the filename from manifest
-            shutil.copytree(download_file.rstrip('.zip'), output_dir)
-
+        with zipfile.ZipFile(auxarchive_path.with_suffix(".zip"), 'r') as download_zip:
+            download_zip.extractall(path=auxarchive_path)
+        
+        # Check if archive contains file for current product
+        if not self.auxiliaryCalibration_file.exists():
+            raise FileNotFoundError(f"AUX calibration archive does not include {filename}. This is probably because your product was created with an IPF version after 11/2024.")
 
 class Sentinel1Image():
     """ Thermal noise correction for S1 GRD data
